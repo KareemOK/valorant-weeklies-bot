@@ -311,10 +311,39 @@ async def report_match(interaction: discord.Interaction, screenshot: discord.Att
             )
         return matched, unmatched_names
 
-    team1_players, unmatched1 = resolve_team(extracted.get("team1", []))
-    team2_players, unmatched2 = resolve_team(extracted.get("team2", []))
+    raw_team1 = list(extracted.get("team1", []))
+    raw_team2 = list(extracted.get("team2", []))
+    total = len(raw_team1) + len(raw_team2)
+
+    # Standard customs (3v3, 5v5, ...) are almost always equal headcount.
+    # If the read comes out uneven, the "this is you" highlighted row (its
+    # background gets a special tint instead of the plain team color) is
+    # by far the most likely one to have been mis-grouped -- rather than
+    # trust a subtle color judgement call for that one ambiguous row, just
+    # move it to whichever side is short a player.
+    if total % 2 == 0 and abs(len(raw_team1) - len(raw_team2)) > 1:
+        if len(raw_team1) > len(raw_team2):
+            owner_idx = next((i for i, p in enumerate(raw_team1) if p.get("is_you")), None)
+            if owner_idx is not None:
+                raw_team2.append(raw_team1.pop(owner_idx))
+        elif len(raw_team2) > len(raw_team1):
+            owner_idx = next((i for i, p in enumerate(raw_team2) if p.get("is_you")), None)
+            if owner_idx is not None:
+                raw_team1.append(raw_team2.pop(owner_idx))
+
+    team1_players, unmatched1 = resolve_team(raw_team1)
+    team2_players, unmatched2 = resolve_team(raw_team2)
     unmatched = unmatched1 + unmatched2
     winner = extracted.get("winner", "unknown")
+
+    size_warning = None
+    if total % 2 == 0 and abs(len(raw_team1) - len(raw_team2)) > 1:
+        size_warning = (
+            f"⚠️ Read {len(raw_team1)} vs {len(raw_team2)} players, which is unusually "
+            "uneven for a match with an even headcount, and I couldn't automatically fix "
+            "it (couldn't tell which row was the \"this is you\" one). Double-check team "
+            "assignment carefully before confirming."
+        )
 
     if not team1_players or not team2_players:
         await interaction.followup.send(
@@ -333,6 +362,8 @@ async def report_match(interaction: discord.Interaction, screenshot: discord.Att
         f.write(image_bytes)
 
     embed = _build_summary_embed(extracted, team1_players, team2_players, unmatched, winner)
+    if size_warning:
+        embed.insert_field_at(0, name="Uneven team sizes read", value=size_warning, inline=False)
     view = ConfirmMatchView(
         extracted, team1_players, team2_players, winner, str(interaction.user.id),
         screenshot_path=screenshot_filename,
