@@ -19,30 +19,57 @@ from anthropic import Anthropic
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
 EXTRACTION_PROMPT = """\
-You are reading a screenshot of a VALORANT post-game scoreboard (the tab
-screen or the end-of-match summary screen). Extract every player you can
-read and return ONLY valid JSON, no other text, matching exactly this
-shape:
+You are reading a screenshot of VALORANT's post-match summary screen, on
+the "Scoreboard" tab. This screen lists all 10 players together in one
+list sorted by Combat Score -- it does NOT group them into two separate
+blocks by side. Instead, each player's row has a background highlight
+color, and there are exactly two distinct team colors used (plus possibly
+a slightly different highlight on the row belonging to whoever's account
+took the screenshot -- that row still belongs to one of the two team
+colors, just visually emphasized).
+
+At the top of the screen there are two numbers with a result word between
+them (e.g. "4  DEFEAT  13" or "13  VICTORY  6"). The left-hand number and
+the result word both describe the outcome for the locally-highlighted
+player's team. The right-hand number is the other team's score.
+
+Extract everything you can read and return ONLY valid JSON, no other text,
+matching exactly this shape:
 
 {
   "map_name": "<map name if visible, else null>",
   "winner": "team1" | "team2" | "draw" | "unknown",
+  "team1_score": <int>,
+  "team2_score": <int>,
   "team1": [
     {"riot_name": "<name as shown, include the tag after # if visible>",
      "agent": "<agent name if visible, else null>",
-     "kills": <int>, "deaths": <int>, "assists": <int>}
+     "kills": <int>, "deaths": <int>, "assists": <int>,
+     "acs": <int, the Avg Combat Score column, or null if not legible>,
+     "first_bloods": <int, or null if not legible>,
+     "plants": <int, or null if not legible>,
+     "defuses": <int, or null if not legible>,
+     "econ_rating": <int, or null if not legible>}
   ],
   "team2": [ ... same shape ... ]
 }
 
 Rules:
-- "team1" is whichever team is listed first / on top of the scoreboard,
-  "team2" the other team. Do not try to guess which is "attackers" or
-  "defenders" -- just preserve the on-screen grouping.
-- If you cannot confidently tell who won from this image, set winner to
-  "unknown" rather than guessing.
-- If a stat is not legible, use 0 for numbers and null for text rather than
-  omitting the field.
+- Group players into "team1" / "team2" using each row's BACKGROUND COLOR,
+  not their position in the list -- this scoreboard interleaves both teams
+  together sorted by Combat Score, so position tells you nothing about
+  team membership.
+- It doesn't matter which of the two colors you call "team1" vs "team2",
+  as long as you're consistent between the player groupings, the scores,
+  and the winner.
+- Match "team1_score" to whichever color you assigned to team1, using the
+  top-of-screen score/result readout described above to figure out which
+  score belongs to which color.
+- If you cannot confidently match the scores/colors together, still report
+  both team1_score and team2_score using left-to-right order as shown on
+  screen, but set winner to "unknown" rather than guessing.
+- If a numeric stat is not legible or not present on screen, use null for
+  it rather than guessing a value or omitting the field.
 - Return JSON only. No markdown code fences, no commentary.
 """
 
@@ -102,5 +129,9 @@ def extract_scoreboard(image_bytes: bytes, media_type: str = "image/png") -> dic
     for key in ("team1", "team2", "winner"):
         if key not in data:
             raise ExtractionError(f"Missing '{key}' in extracted data: {data}")
+
+    data.setdefault("team1_score", None)
+    data.setdefault("team2_score", None)
+    data.setdefault("map_name", None)
 
     return data

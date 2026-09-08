@@ -13,6 +13,11 @@ from pathlib import Path
 
 DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).parent / "weeklies.db"))
 
+# Screenshots are kept next to the database file (so they live on the same
+# mounted volume and survive container restarts/redeploys) rather than
+# inside the container's throwaway filesystem.
+SCREENSHOTS_DIR = DB_PATH.parent / "screenshots"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS players (
     discord_id      TEXT PRIMARY KEY,
@@ -34,6 +39,9 @@ CREATE TABLE IF NOT EXISTS matches (
     reported_by     TEXT NOT NULL,      -- discord_id of whoever ran /report-match
     winner          TEXT NOT NULL,      -- 'team1' | 'team2' | 'draw'
     map_name        TEXT,
+    team1_score     INTEGER,
+    team2_score     INTEGER,
+    screenshot_path TEXT,               -- filename under SCREENSHOTS_DIR, if kept
     screenshot_note TEXT,               -- optional free-text note
     confirmed       INTEGER NOT NULL DEFAULT 0
 );
@@ -46,11 +54,43 @@ CREATE TABLE IF NOT EXISTS match_players (
     kills           INTEGER NOT NULL DEFAULT 0,
     deaths          INTEGER NOT NULL DEFAULT 0,
     assists         INTEGER NOT NULL DEFAULT 0,
+    acs             INTEGER,
+    first_bloods    INTEGER NOT NULL DEFAULT 0,
+    plants          INTEGER NOT NULL DEFAULT 0,
+    defuses         INTEGER NOT NULL DEFAULT 0,
+    econ_rating     INTEGER,
     elo_before      REAL,
     elo_after       REAL,
     PRIMARY KEY (match_id, discord_id)
 );
 """
+
+# Columns added after the initial release. Listed here (rather than just in
+# SCHEMA) so an existing weeklies.db from an earlier version of this project
+# gets upgraded in place -- CREATE TABLE IF NOT EXISTS alone won't add new
+# columns to a table that already exists.
+_MIGRATIONS = {
+    "matches": {
+        "team1_score": "INTEGER",
+        "team2_score": "INTEGER",
+        "screenshot_path": "TEXT",
+    },
+    "match_players": {
+        "acs": "INTEGER",
+        "first_bloods": "INTEGER NOT NULL DEFAULT 0",
+        "plants": "INTEGER NOT NULL DEFAULT 0",
+        "defuses": "INTEGER NOT NULL DEFAULT 0",
+        "econ_rating": "INTEGER",
+    },
+}
+
+
+def _run_migrations(conn):
+    for table, columns in _MIGRATIONS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for col_name, col_type in columns.items():
+            if col_name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
 
 
 @contextmanager
@@ -66,8 +106,10 @@ def get_conn():
 
 
 def init_db():
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _run_migrations(conn)
 
 
 def upsert_player(discord_id: str, display_name: str, riot_name: str | None = None):
@@ -132,6 +174,52 @@ def get_leaderboard(limit: int = 25):
         ).fetchall()
 
 
+def get_leaderboard_extended(limit: int = 50):
+    """
+    Season aggregates computed straight from match_players/matches (rather
+    than more running-total columns bolted onto players), for the
+    sortable web leaderboard: adds KPR, ACS average, plants, defuses,
+    first bloods and win rate on top of the basics.
+    """
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT
+                p.discord_id,
+                p.display_name,
+                p.riot_name,
+                p.elo,
+                p.wins,
+                p.losses,
+                p.games_played,
+                SUM(mp.kills)                                    AS kills,
+                SUM(mp.deaths)                                   AS deaths,
+                SUM(mp.assists)                                  AS assists,
+                SUM(mp.plants)                                   AS plants,
+                SUM(mp.defuses)                                  AS defuses,
+                SUM(mp.first_bloods)                             AS first_bloods,
+                AVG(mp.acs)                                      AS avg_acs,
+                CASE WHEN SUM(m.team1_score + m.team2_score) > 0
+                     THEN SUM(mp.kills) * 1.0 / SUM(m.team1_score + m.team2_score)
+                     ELSE NULL END                                AS kpr,
+                CASE WHEN SUM(mp.deaths) > 0
+                     THEN SUM(mp.kills) * 1.0 / SUM(mp.deaths)
+                     ELSE SUM(mp.kills) * 1.0 END                 AS kd,
+                CASE WHEN p.games_played > 0
+                     THEN p.wins * 1.0 / p.games_played
+                     ELSE 0 END                                   AS win_rate
+            FROM players p
+            JOIN match_players mp ON mp.discord_id = p.discord_id
+            JOIN matches m ON m.id = mp.match_id
+            WHERE p.games_played > 0
+            GROUP BY p.discord_id
+            ORDER BY p.elo DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+
 def record_match(
     winner: str,
     reported_by: str,
@@ -139,16 +227,24 @@ def record_match(
     team2: list[dict],
     elo_updates: dict[str, tuple[float, float]],
     map_name: str | None = None,
+    team1_score: int | None = None,
+    team2_score: int | None = None,
+    screenshot_path: str | None = None,
 ) -> int:
     """
-    team1 / team2: list of dicts with keys discord_id, agent, kills, deaths, assists
+    team1 / team2: list of dicts with keys discord_id, agent, kills, deaths,
+    assists, and optionally acs, first_bloods, plants, defuses, econ_rating.
     elo_updates: {discord_id: (elo_before, elo_after)}
     """
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO matches (played_at, reported_by, winner, map_name, confirmed) "
-            "VALUES (?, ?, ?, ?, 1)",
-            (time.time(), reported_by, winner, map_name),
+            """
+            INSERT INTO matches
+                (played_at, reported_by, winner, map_name, team1_score,
+                 team2_score, screenshot_path, confirmed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (time.time(), reported_by, winner, map_name, team1_score, team2_score, screenshot_path),
         )
         match_id = cur.lastrowid
 
@@ -159,8 +255,9 @@ def record_match(
                     """
                     INSERT INTO match_players
                         (match_id, discord_id, team, agent, kills, deaths, assists,
+                         acs, first_bloods, plants, defuses, econ_rating,
                          elo_before, elo_after)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         match_id,
@@ -170,6 +267,11 @@ def record_match(
                         p.get("kills", 0),
                         p.get("deaths", 0),
                         p.get("assists", 0),
+                        p.get("acs"),
+                        p.get("first_bloods", 0) or 0,
+                        p.get("plants", 0) or 0,
+                        p.get("defuses", 0) or 0,
+                        p.get("econ_rating"),
                         before,
                         after,
                     ),

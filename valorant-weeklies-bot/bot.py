@@ -17,6 +17,7 @@ Run `python bot.py` with DISCORD_TOKEN and ANTHROPIC_API_KEY set (see
 import io
 import logging
 import os
+import uuid
 
 import discord
 from discord import app_commands
@@ -169,13 +170,16 @@ async def stats(interaction: discord.Interaction, player: discord.Member | None 
 
 class ConfirmMatchView(discord.ui.View):
     def __init__(self, extracted: dict, team1_players: list[dict], team2_players: list[dict],
-                 winner: str, reporter_id: str):
+                 winner: str, reporter_id: str, screenshot_path: str | None = None):
         super().__init__(timeout=300)
         self.team1_players = team1_players
         self.team2_players = team2_players
         self.winner = winner
         self.reporter_id = reporter_id
         self.map_name = extracted.get("map_name")
+        self.team1_score = extracted.get("team1_score")
+        self.team2_score = extracted.get("team2_score")
+        self.screenshot_path = screenshot_path
 
     @discord.ui.button(label="Confirm & Save", style=discord.ButtonStyle.success, emoji="✅")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -199,6 +203,9 @@ class ConfirmMatchView(discord.ui.View):
             team2=self.team2_players,
             elo_updates=updates,
             map_name=self.map_name,
+            team1_score=self.team1_score,
+            team2_score=self.team2_score,
+            screenshot_path=self.screenshot_path,
         )
 
         for item in self.children:
@@ -209,6 +216,8 @@ class ConfirmMatchView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.screenshot_path:
+            (db.SCREENSHOTS_DIR / self.screenshot_path).unlink(missing_ok=True)
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(content="Cancelled -- nothing saved.", view=self)
@@ -219,15 +228,30 @@ def _build_summary_embed(extracted: dict, team1_players: list[dict], team2_playe
     def fmt(team):
         if not team:
             return "-"
-        return "\n".join(
-            f"<@{p['discord_id']}> ({p.get('agent') or '?'}) "
-            f"{p['kills']}/{p['deaths']}/{p['assists']}"
-            for p in team
-        )
+        lines = []
+        for p in team:
+            extras = []
+            if p.get("plants"):
+                extras.append(f"{p['plants']} plants")
+            if p.get("defuses"):
+                extras.append(f"{p['defuses']} defuses")
+            if p.get("first_bloods"):
+                extras.append(f"{p['first_bloods']} FB")
+            extra_str = f" ({', '.join(extras)})" if extras else ""
+            acs_str = f" | {p['acs']} ACS" if p.get("acs") is not None else ""
+            lines.append(
+                f"<@{p['discord_id']}> ({p.get('agent') or '?'}) "
+                f"{p['kills']}/{p['deaths']}/{p['assists']}{acs_str}{extra_str}"
+            )
+        return "\n".join(lines)
+
+    score1 = extracted.get("team1_score")
+    score2 = extracted.get("team2_score")
+    score_str = f" ({score1}-{score2})" if score1 is not None and score2 is not None else ""
 
     embed = discord.Embed(
         title="Match report -- please confirm",
-        description=f"Map: {extracted.get('map_name') or 'unknown'} | Winner: **{winner}**",
+        description=f"Map: {extracted.get('map_name') or 'unknown'} | Winner: **{winner}**{score_str}",
         color=discord.Color.orange(),
     )
     embed.add_field(name="Team 1", value=fmt(team1_players), inline=True)
@@ -278,6 +302,11 @@ async def report_match(interaction: discord.Interaction, screenshot: discord.Att
                     "kills": rp.get("kills", 0),
                     "deaths": rp.get("deaths", 0),
                     "assists": rp.get("assists", 0),
+                    "acs": rp.get("acs"),
+                    "first_bloods": rp.get("first_bloods") or 0,
+                    "plants": rp.get("plants") or 0,
+                    "defuses": rp.get("defuses") or 0,
+                    "econ_rating": rp.get("econ_rating"),
                 }
             )
         return matched, unmatched_names
@@ -295,8 +324,19 @@ async def report_match(interaction: discord.Interaction, screenshot: discord.Att
         )
         return
 
+    # Keep the original screenshot alongside the database so a disputed
+    # match can be double-checked against what was actually submitted.
+    db.SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    ext = ".png" if "png" in media_type else ".jpg"
+    screenshot_filename = f"{uuid.uuid4().hex}{ext}"
+    with open(db.SCREENSHOTS_DIR / screenshot_filename, "wb") as f:
+        f.write(image_bytes)
+
     embed = _build_summary_embed(extracted, team1_players, team2_players, unmatched, winner)
-    view = ConfirmMatchView(extracted, team1_players, team2_players, winner, str(interaction.user.id))
+    view = ConfirmMatchView(
+        extracted, team1_players, team2_players, winner, str(interaction.user.id),
+        screenshot_path=screenshot_filename,
+    )
     await interaction.followup.send(embed=embed, view=view)
 
 
