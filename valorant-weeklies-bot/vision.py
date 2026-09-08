@@ -20,13 +20,15 @@ MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
 EXTRACTION_PROMPT = """\
 You are reading a screenshot of VALORANT's post-match summary screen, on
-the "Scoreboard" tab. This screen lists all 10 players together in one
-list sorted by Combat Score -- it does NOT group them into two separate
-blocks by side. Instead, each player's row has a background highlight
-color, and there are exactly two distinct team colors used (plus possibly
-a slightly different highlight on the row belonging to whoever's account
-took the screenshot -- that row still belongs to one of the two team
-colors, just visually emphasized).
+the "Scoreboard" tab. This screen lists every player in the match together
+in one list sorted by Combat Score (this could be 10 players for a 5v5, 6
+for a 3v3, or any other custom match size) -- it does NOT group them into
+two separate blocks by side. Instead, each player's row has a background
+highlight color, and there are exactly two distinct team colors used
+(plus possibly a slightly different highlight on the row belonging to
+whoever's account took the screenshot -- that row still belongs to one of
+the two team colors, just visually emphasized). Extract every player row
+you can see, whatever the total count turns out to be.
 
 At the top of the screen there are two numbers with a result word between
 them (e.g. "4  DEFEAT  13" or "13  VICTORY  6"). The left-hand number and
