@@ -23,17 +23,38 @@ You are reading a screenshot of VALORANT's post-match summary screen, on
 the "Scoreboard" tab. This screen lists every player in the match together
 in one list sorted by Combat Score (this could be 10 players for a 5v5, 6
 for a 3v3, or any other custom match size) -- it does NOT group them into
-two separate blocks by side. Instead, each player's row has a background
-highlight color, and there are exactly two distinct team colors used
-(plus possibly a slightly different highlight on the row belonging to
-whoever's account took the screenshot -- that row still belongs to one of
-the two team colors, just visually emphasized). Extract every player row
-you can see, whatever the total count turns out to be.
+two separate blocks by side. Extract every player row you can see, whatever
+the total count turns out to be.
+
+There are exactly two team colors on this screen, and there are TWO
+different visual signals that can indicate a row's team -- they will not
+always agree, and when they don't, trust the second one:
+1. Most rows have their whole background tinted one of the two team
+   colors.
+2. The row belonging to whoever's account took the screenshot gets a
+   special "this is you" treatment instead -- typically an olive/gold/tan
+   overall tint, sometimes with a chevron or arrow shape -- which visually
+   overrides the plain team-color fill. That row still belongs to one of
+   the two real teams, NOT a third category. Look at the thin colored
+   accent stripe/border on the left edge of that row (it's a much smaller
+   area than the row's main fill and keeps reflecting the true team color
+   even when the rest of the row is highlighted specially) to figure out
+   which of the two teams it actually belongs to, and group it there. Do
+   not default to grouping the "this is you" row with whichever team has
+   more plain-colored rows -- decide it independently from that thin
+   accent color.
+
+If a match has an even number of players, the two teams are almost always
+equal size (e.g. 3v3, 5v5) -- if your grouping comes out uneven for an
+even player count, that's a strong signal you mis-assigned the "this is
+you" row and should re-examine it before finalizing.
 
 At the top of the screen there are two numbers with a result word between
 them (e.g. "4  DEFEAT  13" or "13  VICTORY  6"). The left-hand number and
-the result word both describe the outcome for the locally-highlighted
-player's team. The right-hand number is the other team's score.
+the result word both describe the outcome for the team that the
+locally-highlighted ("this is you") row belongs to, using the same
+team-assignment logic above. The right-hand number is the other team's
+score.
 
 Extract everything you can read and return ONLY valid JSON, no other text,
 matching exactly this shape:
@@ -51,7 +72,9 @@ matching exactly this shape:
      "first_bloods": <int, or null if not legible>,
      "plants": <int, or null if not legible>,
      "defuses": <int, or null if not legible>,
-     "econ_rating": <int, or null if not legible>}
+     "econ_rating": <int, or null if not legible>,
+     "is_you": <true if this is the "this is you" highlighted row
+                (the one whose account took the screenshot), else false>}
   ],
   "team2": [ ... same shape ... ]
 }
@@ -64,6 +87,10 @@ Rules:
 - It doesn't matter which of the two colors you call "team1" vs "team2",
   as long as you're consistent between the player groupings, the scores,
   and the winner.
+- Exactly one player should have "is_you": true (the highlighted row);
+  everyone else should have "is_you": false. If you genuinely can't tell
+  which row (if any) has the special highlight, it's fine for every player
+  to have "is_you": false.
 - Match "team1_score" to whichever color you assigned to team1, using the
   top-of-screen score/result readout described above to figure out which
   score belongs to which color.
