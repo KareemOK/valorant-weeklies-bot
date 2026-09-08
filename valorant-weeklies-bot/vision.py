@@ -26,28 +26,33 @@ for a 3v3, or any other custom match size) -- it does NOT group them into
 two separate blocks by side. Extract every player row you can see, whatever
 the total count turns out to be.
 
-There are exactly two team colors on this screen, and there are TWO
-different visual signals that can indicate a row's team -- they will not
-always agree, and when they don't, trust the second one:
-1. Most rows have their whole background tinted one of the two team
-   colors.
-2. The row belonging to whoever's account took the screenshot gets a
-   special "this is you" treatment instead -- typically an olive/gold/tan
-   overall tint, sometimes with a chevron or arrow shape -- which visually
-   overrides the plain team-color fill. That row still belongs to one of
-   the two real teams, NOT a third category. Look at the thin colored
-   accent stripe/border on the left edge of that row (it's a much smaller
-   area than the row's main fill and keeps reflecting the true team color
-   even when the rest of the row is highlighted specially) to figure out
-   which of the two teams it actually belongs to, and group it there. Do
-   not default to grouping the "this is you" row with whichever team has
-   more plain-colored rows -- decide it independently from that thin
-   accent color.
+There are exactly two team colors on this screen. Every row has a thin
+colored accent stripe running down its left edge, right where the agent
+portrait sits -- use THAT stripe, not the wide background wash across the
+rest of the row, as your primary signal for every single player's team.
+The stripe is a purer, more consistent read of the true team color: the
+wider fill can shift shade row to row depending on card art bleeding
+through underneath it, which is exactly the kind of subtle difference
+that's easy to misjudge between two similarly dark colors. Only fall back
+to the overall fill color for a row if you genuinely cannot make out a
+distinct stripe color on it.
+
+Separately, exactly one row on screen -- whoever's account took the
+screenshot -- gets an extra "this is you" treatment layered on top of its
+normal coloring: typically an olive/gold/tan wash across the row,
+sometimes with a small chevron/arrow graphic. This treatment does NOT
+change which of the two real teams that row belongs to, and it is not a
+third category -- keep classifying that row by its left-edge stripe color
+exactly like every other row. It only marks which one player should get
+"is_you": true in the output (see below) -- it has no bearing on team
+grouping.
 
 If a match has an even number of players, the two teams are almost always
-equal size (e.g. 3v3, 5v5) -- if your grouping comes out uneven for an
-even player count, that's a strong signal you mis-assigned the "this is
-you" row and should re-examine it before finalizing.
+equal size (e.g. 3v3, 5v5). If your grouping comes out uneven for an even
+player count, OR if you weren't fully confident reading every row's
+stripe color, re-examine each row's stripe individually before
+finalizing -- a single misread row is far more likely than a genuine
+size imbalance.
 
 At the top of the screen there are two numbers with a result word between
 them (e.g. "4  DEFEAT  13" or "13  VICTORY  6"). The left-hand number and
@@ -80,10 +85,10 @@ matching exactly this shape:
 }
 
 Rules:
-- Group players into "team1" / "team2" using each row's BACKGROUND COLOR,
-  not their position in the list -- this scoreboard interleaves both teams
-  together sorted by Combat Score, so position tells you nothing about
-  team membership.
+- Group players into "team1" / "team2" using each row's LEFT-EDGE ACCENT
+  STRIPE COLOR (see above), not their position in the list -- this
+  scoreboard interleaves both teams together sorted by Combat Score, so
+  position tells you nothing about team membership.
 - It doesn't matter which of the two colors you call "team1" vs "team2",
   as long as you're consistent between the player groupings, the scores,
   and the winner.
