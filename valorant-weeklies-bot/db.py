@@ -6,6 +6,7 @@ and writes this same file, so no separate database server is needed.
 """
 
 import os
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -143,16 +144,38 @@ def get_player(discord_id: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
+def _strip_clan_tag(name: str) -> str:
+    """
+    Valorant lets players set a clan tag that displays in-game as
+    "TAG | ActualName" -- that prefix is purely cosmetic and has nothing to
+    do with their Riot ID, so it needs to come off before matching a name
+    read off a scoreboard against what someone /link'd.
+    """
+    return re.sub(r"^\S+\s*\|\s*", "", name).strip()
+
+
 def find_player_by_riot_name(riot_name: str) -> sqlite3.Row | None:
-    """Best-effort fuzzy match: exact match first, then case-insensitive
-    match on the name portion before '#'."""
+    """
+    Best-effort match, tried in order: exact match on the raw string, exact
+    match with any clan tag prefix stripped, then a case-insensitive
+    starts-with match on the name portion before '#'.
+    """
     with get_conn() as conn:
         exact = conn.execute(
             "SELECT * FROM players WHERE riot_name = ? COLLATE NOCASE", (riot_name,)
         ).fetchone()
         if exact:
             return exact
-        name_part = riot_name.split("#")[0]
+
+        stripped = _strip_clan_tag(riot_name)
+        if stripped != riot_name:
+            exact_stripped = conn.execute(
+                "SELECT * FROM players WHERE riot_name = ? COLLATE NOCASE", (stripped,)
+            ).fetchone()
+            if exact_stripped:
+                return exact_stripped
+
+        name_part = stripped.split("#")[0]
         return conn.execute(
             "SELECT * FROM players WHERE riot_name LIKE ? COLLATE NOCASE",
             (f"{name_part}%",),
