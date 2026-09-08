@@ -87,10 +87,15 @@ Rules:
 - It doesn't matter which of the two colors you call "team1" vs "team2",
   as long as you're consistent between the player groupings, the scores,
   and the winner.
-- Exactly one player should have "is_you": true (the highlighted row);
-  everyone else should have "is_you": false. If you genuinely can't tell
-  which row (if any) has the special highlight, it's fine for every player
-  to have "is_you": false.
+- This screen can only ever be viewed from one specific account's client,
+  so there is ALWAYS exactly one "this is you" row on screen -- it is
+  never the case that no row has one. Find it and mark it: look for
+  whichever single row has a noticeably different overall background tint
+  from the two plain team colors (often a warm gold/khaki/tan shade, and
+  it may carry a small chevron/arrow graphic). Set "is_you": true on that
+  one player and false on everyone else. Only fall back to marking
+  everyone false if the image is so unclear that you cannot make out
+  individual row colors at all.
 - Match "team1_score" to whichever color you assigned to team1, using the
   top-of-screen score/result readout described above to figure out which
   score belongs to which color.
